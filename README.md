@@ -8,7 +8,7 @@ A Drosera Network security trap built for the Hoodi testnet that detects and ale
 - [How It Works](#how-it-works)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
-- [GitHub Codespaces Setup](#github-codespaces-setup) ⭐ **New!**
+- [GitHub Codespaces Setup](#github-codespaces-setup)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Deployment](#deployment)
@@ -46,32 +46,33 @@ The system consists of two main smart contracts:
 ### Detection Logic
 
 The trap is built around a simple but expressive invariant:
-- **If the number of new token pairs created since the baseline exceeds 100, something unusual is happening and operators should take a look.**
-Concretely:
+> **If the number of new token pairs created since the baseline exceeds 100, something unusual is happening and operators should take a look.**
+
+**Concretely:**
 1. **Baseline tracking**
-- initialPairCount represents the baseline “healthy” factory state.
-- In production, this would be set from the live factory pair count at some known-good time.
+    - `initialPairCount` represents the baseline “healthy” factory state.
+    - In production, this would be set from the live factory pair count at some known-good time.
 
 2. **Current state**
-- simulatedPairCount represents the current factory pair count.
-- In this implementation it is intentionally owner-controlled so scenarios can be simulated and tuned without needing a live factory. This makes it easy to demo, reason about, and extend.
+    - `simulatedPairCount` represents the current factory pair count.
+    - In this implementation it is intentionally owner-controlled so scenarios can be simulated and tuned without needing a live factory. This makes it easy to demo, reason about, and extend.
 
 3. **Threshold check**
-- On each block, the Drosera operator calls collect(), which returns abi.encode(initialPairCount, simulatedPairCount).
-- The operator then calls shouldRespond(bytes[] data) with the most recent sample as data[0].
-- The trap decodes data[0] and computes:
-- newPairs = current > initial ? current - initial : 0.
+    - On each block, the Drosera operator calls `collect()`, which returns `abi.encode(initialPairCount, simulatedPairCount)`.
+    - The operator then calls `shouldRespond(bytes[] data)` with the most recent sample as `data[0]`.
+    - The trap decodes `data[0]` and computes:
+        - `newPairs = current > initial ? current - initial : 0`.
 
 4. **Response trigger**
-- If newPairs > SAFETY_THRESHOLD (100 by default), shouldRespond returns:
-- true and abi.encode(current) as the payload.
+    - If `newPairs > SAFETY_THRESHOLD` (100 by default), `shouldRespond` returns:
+        - `true` and `abi.encode(current)` as the payload.
 
-- That payload is forwarded to the Response contract’s alertSpamDetection(uint256 pairCount) function, which:
-- Records the alert,
-- Emits events for off-chain monitoring,
-- Tracks alert history and last-seen values.
+    - That payload is forwarded to the Response contract’s `alertSpamDetection(uint256 pairCount)` function, which:
+        - Records the alert,
+        - Emits events for off-chain monitoring,
+        - Tracks alert history and last-seen values.
 
-    This keeps the core detection logic very focused (pair creation velocity), but it is easy to extend later—for example:
+        This keeps the core detection logic very focused (pair creation velocity), but it is easy to extend later—for example:
 
 - Different thresholds per factory,
 - Time-weighted windows (e.g. “100 pairs in the last N blocks”),
@@ -79,6 +80,7 @@ Concretely:
 
 ## Workflow
 
+```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Drosera Operator                         │
 │  (Runs every block on the Hoodi testnet)                    │
@@ -87,38 +89,39 @@ Concretely:
                           │ 1. Calls collect()
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              NewTokenPairSpamTrap Contract                   │
-│  • Reads initialPairCount & simulatedPairCount               │
-│  • Returns encoded data (view function only)                 │
+│              NewTokenPairSpamTrap Contract                  │
+│  • Reads initialPairCount & simulatedPairCount              │
+│  • Returns encoded data (view function only)                │
 └─────────────────────────────────────────────────────────────┘
                           │
                           │ 2. Returns bytes
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    Drosera Operator                         │
-│  • Stores data off-chain                                     │
-│  • Calls shouldRespond() with historical data                │
+│  • Stores data off-chain                                    │
+│  • Calls shouldRespond() with historical data               │
 └─────────────────────────────────────────────────────────────┘
                           │
                           │ 3. Calls shouldRespond()
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              NewTokenPairSpamTrap Contract                   │
-│  • Decodes data array                                        │
-│  • Calculates: newPairs = current - initial                  │
-│  • Checks: if (newPairs > 100)                               │
-│  • Returns: (true, encoded_payload) if threat detected       │
+│              NewTokenPairSpamTrap Contract                  │
+│  • Decodes data array                                       │
+│  • Calculates: newPairs = current - initial                 │
+│  • Checks: if (newPairs > 100)                              │
+│  • Returns: (true, encoded_payload) if threat detected      │
 └─────────────────────────────────────────────────────────────┘
                           │
                           │ 4. If true, trigger response
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                  ResponseContract                            │
-│  • alertSpamDetection(pairCount) called                      │
-│  • Records alert in history                                  │
-│  • Emits SpamDetectionAlert event                            │
-│  • Emits EmergencyAction event                               │
+│                  ResponseContract                           │
+│  • alertSpamDetection(pairCount) called                     │
+│  • Records alert in history                                 │
+│  • Emits SpamDetectionAlert event                           │
+│  • Emits EmergencyAction event                              │
 └─────────────────────────────────────────────────────────────┘
+```
 ```
 
 ## 🏗️ Architecture
@@ -500,7 +503,7 @@ c:\Users\kachi\Trap\
 
 ### NewTokenPairSpamTrap
 
-**Address**: _(Set after deployment)_
+**Address**: _0x2298838564f479B890B4D7A5C59aE0A340cD2f05_
 
 **Constructor**: Empty (required for Drosera dry-run compatibility)
 
@@ -531,7 +534,7 @@ c:\Users\kachi\Trap\
 
 ### ResponseContract
 
-**Address**: _(Set after deployment)_
+**Address**: _0x4582470e4071E61fe4FED4f49F5F47bEcbAD89e8_
 
 **Events**:
 - `SpamDetectionAlert(uint256 pairCount, uint256 timestamp, address triggeredBy)`
@@ -706,3 +709,4 @@ MIT License - See contract headers for details
 **Built for Drosera Network Hoodi Testnet**
 
 For questions, issues, or contributions, please refer to the Drosera community resources above.
+
