@@ -1,0 +1,23 @@
+{
+  "name": "new-token-pair-spam-trap",
+  "version": "1.0.0",
+  "description": "Drosera Network security trap for detecting New Token Pair Spam attacks on Hoodi testnet",
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test",
+    "deploy": "forge script script/DeployResponseProtocol.s.sol --rpc-url $HOODI_RPC_URL --broadcast"
+  },
+  "devDependencies": {
+    "prettier": "^3.0.0",
+    "prettier-plugin-solidity": "^1.1.3"
+  },
+  "keywords": [
+    "drosera",
+    "security",
+    "trap",
+    "hoodi",
+    "blockchain"
+  ],
+  "author": "Kachi Osuji",
+  "license": "MIT"
+}

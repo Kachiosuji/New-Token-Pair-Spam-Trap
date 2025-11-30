@@ -1,0 +1,27 @@
+{
+    "name": "Drosera Trap Development",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "features": {
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "20"
+        },
+        "ghcr.io/devcontainers/features/git:1": {}
+    },
+    "postCreateCommand": "bash .devcontainer/setup.sh",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "JuanBlanco.solidity",
+                "esbenp.prettier-vscode",
+                "dbaeumer.vscode-eslint"
+            ],
+            "settings": {
+                "solidity.compileUsingRemoteVersion": "v0.8.24",
+                "solidity.defaultCompiler": "remote",
+                "editor.formatOnSave": true
+            }
+        }
+    },
+    "forwardPorts": [],
+    "remoteUser": "vscode"
+}
