@@ -1,6 +1,6 @@
 # New Token Pair Spam Trap - Drosera Network Security
 
-A Drosera Network security trap built for the Hoodi testnet that detects and alerts on "New Token Pair Spam" attacks by monitoring the rate of new pair creation in a simulated factory environment.
+A Drosera Network security trap built for the Hoodi testnet that detects and alerts on "New Token Pair Spam" attacks by monitoring the rate of new pair creation from real DEX factory contracts.
 
 ## 📋 Table of Contents
 
@@ -25,58 +25,65 @@ This project implements a Drosera Trap + Response pair for the Hoodi testnet tha
 
 At a high level, this trap:
 
-- Treats the factory’s total pair count as a core signal
-- Tracks a baseline `initialPairCount` and current `simulatedPairCount`
-- Computes the net-new pairs `current - initial`
-- Triggers a response once the number of new pairs crosses a configurable threshold (100 by default)
+- Reads real on-chain data from a DEX factory using `IUniV2Factory.allPairsLength()`
+- Compares newest sample vs previous sample (baseline comparison)
+- Triggers when net-new pairs exceed 100 within the monitoring window
+- Uses official Drosera `ITrap` interface for full operator compatibility
 
-This repo is intended as a complete, operator-ready example for the Drosera team, showing:
+This repo demonstrates:
 
-- How to structure a trap around a realistic spam scenario
-- How to keep `collect()` and `shouldRespond()` compatible with the operator environment
-- How to wire a dedicated Response contract that cleanly separates detection from on-chain action
+- ✅ Official `ITrap` interface implementation (no custom storage)
+- ✅ Real on-chain data reading (deterministic and operator-compatible)
+- ✅ Pure `shouldRespond()` with historical data comparison
+- ✅ Planner-safety checks for empty data blobs
+- ✅ Proper TOML configuration with string function signatures
 
-The system consists of two main smart contracts:
+The system consists of three deployed contracts:
 
-1. **NewTokenPairSpamTrap**: Encodes the detection logic for new token pair spam
-2. **ResponseContract**: Receives alerts from the trap and records them on-chain for operators and downstream automation
+1. **SimpleMockFactory**: DEX factory simulator with `allPairsLength()` interface
+2. **NewTokenPairSpamTrap**: Reads factory state and detects spam patterns
+3. **ResponseContract**: Receives alerts and logs them on-chain
 
 ## 🔧 How It Works
 
 ### Detection Logic
 
-The trap is built around a simple but expressive invariant:
-> **If the number of new token pairs created since the baseline exceeds 100, something unusual is happening and operators should take a look.**
+The trap implements a **delta-based detection pattern**:
 
-**Concretely:**
-1. **Baseline tracking**
-    - `initialPairCount` represents the baseline “healthy” factory state.
-    - In production, this would be set from the live factory pair count at some known-good time.
+> **If the number of new pairs created between consecutive samples exceeds 100, alert operators.**
 
-2. **Current state**
-    - `simulatedPairCount` represents the current factory pair count.
-    - In this implementation it is intentionally owner-controlled so scenarios can be simulated and tuned without needing a live factory. This makes it easy to demo, reason about, and extend.
+**How it works:**
 
-3. **Threshold check**
-    - On each block, the Drosera operator calls `collect()`, which returns `abi.encode(initialPairCount, simulatedPairCount)`.
-    - The operator then calls `shouldRespond(bytes[] data)` with the most recent sample as `data[0]`.
-    - The trap decodes `data[0]` and computes:
-        - `newPairs = current > initial ? current - initial : 0`.
+1. **Data Collection** (`collect()` - view function)
 
-4. **Response trigger**
-    - If `newPairs > SAFETY_THRESHOLD` (100 by default), `shouldRespond` returns:
-        - `true` and `abi.encode(current)` as the payload.
+   - Reads `IUniV2Factory(FACTORY).allPairsLength()` from the factory contract
+   - Returns `abi.encode(pairCount, block.number)`
+   - Fully deterministic - all operators see the same data
 
-    - That payload is forwarded to the Response contract’s `alertSpamDetection(uint256 pairCount)` function, which:
-        - Records the alert,
-        - Emits events for off-chain monitoring,
-        - Tracks alert history and last-seen values.
+2. **Historical Comparison** (`shouldRespond()` - pure function)
 
-        This keeps the core detection logic very focused (pair creation velocity), but it is easy to extend later—for example:
+   - Receives array: `data[0]` = newest sample, `data[1]` = previous sample
+   - Decodes both samples to get pair counts
+   - Calculates delta: `newestCount - previousCount`
+   - Requires `block_sample_size = 2` in TOML config
 
-- Different thresholds per factory,
-- Time-weighted windows (e.g. “100 pairs in the last N blocks”),
-- Combining pair count with liquidity/TVL or volume metrics.
+3. **Planner Safety**
+
+   - Checks `data.length >= 2` (need both samples)
+   - Checks `data[0].length > 0` and `data[1].length > 0` (no empty blobs)
+   - Returns `(false, "")` if validation fails
+
+4. **Threshold Trigger**
+   - If `delta > 100`, returns `(true, abi.encode(newestCount, delta, blockNumber))`
+   - Payload is passed to `ResponseContract.alertSpamDetection(uint256)`
+   - Events emitted for off-chain monitoring
+
+**Key improvements over baseline approach:**
+
+- ✅ No mutable on-chain state (no owner-set variables)
+- ✅ Reads real protocol data every block
+- ✅ Works with any UniswapV2-style factory
+- ✅ Easy to swap mock factory for production factory
 
 ## Workflow
 
@@ -122,7 +129,8 @@ The trap is built around a simple but expressive invariant:
 │  • Emits EmergencyAction event                              │
 └─────────────────────────────────────────────────────────────┘
 ```
-```
+
+````
 
 ## 🏗️ Architecture
 
@@ -130,20 +138,15 @@ The trap is built around a simple but expressive invariant:
 
 #### NewTokenPairSpamTrap.sol
 
-**Inheritance**: Extends the official Drosera `Trap` base contract
+**Interface**: Implements official Drosera `ITrap` interface
 
-**State Variables**:
-- `initialPairCount`: Baseline pair count for comparison
-- `simulatedPairCount`: Current simulated pair count
+**Constants**:
+- `FACTORY`: Address of the DEX factory to monitor
 - `SAFETY_THRESHOLD`: Maximum allowed new pairs (100)
-- `owner`: Contract owner for administrative functions
 
 **Key Functions**:
-- `collect()`: View function that reads and encodes state variables
-- `shouldRespond()`: Pure function that analyzes data and determines if alert should trigger
-- `shouldAlert()`: Alternative alert mechanism with same logic
-- `updateSimulatedCount()`: Owner-only function to update simulation for testing
-- `setInitialPairCount()`: Owner-only function to set baseline
+- `collect() external view returns (bytes)`: Reads factory pair count and block number
+- `shouldRespond(bytes[] calldata data) external pure returns (bool, bytes)`: Compares samples and triggers on threshold breach
 
 #### ResponseContract.sol
 
@@ -175,7 +178,7 @@ method = "initialPairCount()(uint256)"
 [[trap.new_token_pair_spam_trap.inputs]]
 contract = "{{trap_address}}"
 method = "simulatedPairCount()(uint256)"
-```
+````
 
 This configuration ensures the `collect()` function data is properly structured for the `shouldRespond()` function.
 
@@ -186,18 +189,21 @@ Before you begin, ensure you have the following installed:
 ### Required Tools
 
 1. **Foundry** - Ethereum development toolkit
+
    ```bash
    curl -L https://foundry.paradigm.xyz | bash
    foundryup
    ```
 
 2. **Drosera CLI** - For deploying and managing traps
+
    ```bash
    curl -L https://app.drosera.io/install | bash
    droseraup
    ```
 
 3. **Node.js & Bun** (Optional but recommended)
+
    ```bash
    curl -fsSL https://bun.sh/install | bash
    ```
@@ -211,6 +217,7 @@ Before you begin, ensure you have the following installed:
 ### Network Requirements
 
 - **Hoodi Testnet RPC**: Get a free RPC endpoint from:
+
   - [Alchemy](https://www.alchemy.com/) - Create account and get Hoodi RPC
   - [QuickNode](https://www.quicknode.com/) - Alternative RPC provider
   - Public RPC: `https://ethereum-hoodi-rpc.publicnode.com`
@@ -234,11 +241,13 @@ GitHub Codespaces provides a cloud-based development environment with everything
 ### Quick Start with Codespaces
 
 1. **Create GitHub Repository**
+
    - Go to GitHub.com and create a new repository
    - Name it: `new-token-pair-spam-trap`
    - Make it Public or Private
 
 2. **Upload Project Files**
+
    - Upload all files from your local project to GitHub:
      ```
      .devcontainer/, src/, script/, *.toml, *.json, *.md, LICENSE
@@ -253,12 +262,14 @@ GitHub Codespaces provides a cloud-based development environment with everything
      ```
 
 3. **Launch Codespace**
+
    - Click green "Code" button on GitHub
    - Click "Codespaces" tab
    - Click "Create codespace on main"
    - Wait 2-3 minutes for automatic setup ✨
 
 4. **Verify Installation** (in Codespace terminal)
+
    ```bash
    forge --version
    drosera --version
@@ -266,20 +277,22 @@ GitHub Codespaces provides a cloud-based development environment with everything
    ```
 
 5. **Configure & Deploy**
+
    ```bash
    # Create .env file
    cp .env.example .env
    # Edit with: code .env
    # Add your PRIVATE_KEY and HOODI_RPC_URL
-   
+
    # Compile
    forge build
-   
+
    # Deploy
    forge script script/DeployResponseProtocol.s.sol --rpc-url $HOODI_RPC_URL --broadcast
    ```
 
 **Benefits of Codespaces:**
+
 - ✅ No local installation needed
 - ✅ Automatic tool setup (Foundry, Drosera CLI, Bun)
 - ✅ Works on any device with a browser
@@ -350,12 +363,14 @@ After deployment, you'll need to update the hardcoded response contract address:
 ### Configure drosera.toml
 
 The `drosera.toml` file is pre-configured with:
+
 - Network: Hoodi testnet
 - Inputs array mapping for state variables
 - Response function signature
 - Optional alert configurations (commented out)
 
 You can customize:
+
 - Alert integrations (Slack, webhooks)
 - Monitoring intervals
 - Gas settings
@@ -379,6 +394,7 @@ forge script script/Deploy.s.sol --rpc-url https://ethereum-hoodi.publicnode.com
 ```
 
 The script will:
+
 1. Deploy ResponseContract
 2. Deploy NewTokenPairSpamTrap
 3. Print both contract addresses
@@ -387,6 +403,7 @@ The script will:
 #### Step 3: Update Addresses
 
 Follow the console output to update:
+
 - `RESPONSE_CONTRACT` in `NewTokenPairSpamTrap.sol`
 - `response_contract` in `drosera.toml`
 
@@ -416,6 +433,7 @@ drosera apply
 ```
 
 This will:
+
 - Deploy the trap to Hoodi testnet
 - Register it with Drosera Network
 - Update `drosera.toml` with deployed address
@@ -503,44 +521,34 @@ c:\Users\kachi\Trap\
 
 ### NewTokenPairSpamTrap
 
-**Address**: _0x2298838564f479B890B4D7A5C59aE0A340cD2f05_
+**Address**: `0x28c7F908Cc2b97601638f3D3b6e5a5C0aE494197`
 
-**Constructor**: Empty (required for Drosera dry-run compatibility)
+**Trap Config**: `0x5994eFC05DA5cAFFF3f0DC6324C973c30F23A60d`
 
-**State Variables**:
-| Variable | Type | Purpose |
-|----------|------|---------|
-| initialPairCount | uint256 | Baseline pair count |
-| simulatedPairCount | uint256 | Current simulated count |
-| SAFETY_THRESHOLD | uint256 | Trigger threshold (100) |
-| owner | address | Contract owner |
+**Interface**: Implements `ITrap` (official Drosera v2.0 interface)
 
-**View Functions**:
-- `collect()`: Returns encoded state for analysis
-- `initialPairCount()`: Get baseline count
-- `simulatedPairCount()`: Get current count
-- `SAFETY_THRESHOLD()`: Get threshold value
+**Constants**:
+| Constant | Type | Value | Purpose |
+|----------|------|-------|------|
+| FACTORY | address | `0xe4Ec2cdC6c312dA357abC40aBC47A5FE16aEa902` | Factory to monitor |
+| SAFETY_THRESHOLD | uint256 | 100 | Trigger threshold |
 
-**Pure Functions**:
-- `shouldRespond(bytes[] calldata)`: Determine if response needed
-- `shouldAlert(bytes[] calldata)`: Determine if alert needed
-- `getResponseContract()`: Return response contract address
-- `getResponseFunction()`: Return response function signature
-- `getResponseArguments()`: Return response arguments
+**Functions**:
 
-**Owner Functions**:
-- `updateSimulatedCount(uint256)`: Update simulation
-- `setInitialPairCount(uint256)`: Set baseline
+- `collect() external view returns (bytes)`: Reads `factory.allPairsLength()` and encodes with block number
+- `shouldRespond(bytes[] calldata data) external pure returns (bool, bytes)`: Compares newest vs previous sample, triggers if delta > 100
 
 ### ResponseContract
 
-**Address**: _0x4582470e4071E61fe4FED4f49F5F47bEcbAD89e8_
+**Address**: `0x4582470e4071E61fe4FED4f49F5F47bEcbAD89e8`
 
 **Events**:
+
 - `SpamDetectionAlert(uint256 pairCount, uint256 timestamp, address triggeredBy)`
 - `EmergencyAction(uint256 pairCount, string action, uint256 timestamp)`
 
 **Public Functions**:
+
 - `alertSpamDetection(uint256)`: Receive alert from trap
 - `getAlert(uint256)`: Get specific alert details
 - `getLastAlert()`: Get most recent alert
@@ -551,13 +559,15 @@ c:\Users\kachi\Trap\
 
 ### Design Principles
 
-1. **No External Calls in collect()**: The `collect()` function is strictly a view function that only reads internal state, avoiding network calls that could fail in the Drosera operator environment.
+1. **Real On-Chain Data**: `collect()` reads factory state via `IUniV2Factory.allPairsLength()` - operators get consistent, real data
 
-2. **Pure shouldRespond()**: Detection logic is pure and deterministic, ensuring consistent behavior across operators.
+2. **Pure Detection Logic**: `shouldRespond()` is pure and stateless - fully deterministic across all operators
 
-3. **Owner Access Control**: Administrative functions are protected with `onlyOwner` modifier.
+3. **Planner-Safe**: Validates data array length and checks for empty blobs before decoding
 
-4. **Event Logging**: All critical actions emit events for transparency and monitoring.
+4. **No Mutable State**: Trap has no owner-controlled variables - cannot be manipulated between operator runs
+
+5. **Official Interface**: Uses Drosera's `ITrap` interface - guaranteed compatibility with operator infrastructure
 
 ### Best Practices
 
@@ -568,12 +578,12 @@ c:\Users\kachi\Trap\
 - ✅ Test threshold values appropriate for your use case
 - ✅ Keep Drosera CLI and Foundry up to date
 
-### Limitations
+### Production Considerations
 
-- This is a **simulation** for educational/testing purposes
-- Real production systems should monitor actual factory contracts
-- The threshold of 100 new pairs is configurable but hardcoded
-- Requires manual updates via owner functions for testing
+- Currently uses `SimpleMockFactory` for testing - replace `FACTORY` constant with real UniswapV2 factory address for production
+- Threshold of 100 is hardcoded - consider parameterizing for different factory sizes
+- Single-factory monitoring - can extend to multi-factory with array of targets
+- Delta-based (newest vs previous) - consider time-weighted or rolling window approaches
 
 ## 🐛 Troubleshooting
 
@@ -582,6 +592,7 @@ c:\Users\kachi\Trap\
 **Error**: `forge: command not found`
 
 **Solution**: Install Foundry:
+
 ```bash
 curl -L https://foundry.paradigm.xyz | bash
 foundryup
@@ -592,6 +603,7 @@ foundryup
 **Error**: `drosera: command not found`
 
 **Solution**: Install Drosera CLI:
+
 ```bash
 curl -L https://app.drosera.io/install | bash
 droseraup
@@ -602,6 +614,7 @@ droseraup
 **Error**: Missing dependencies
 
 **Solution**: Install Forge dependencies:
+
 ```bash
 forge install foundry-rs/forge-std
 ```
@@ -611,6 +624,7 @@ forge install foundry-rs/forge-std
 **Error**: Insufficient funds or RPC issues
 
 **Solution**:
+
 1. Ensure wallet has Hoodi testnet ETH
 2. Verify RPC URL is correct
 3. Check private key is set correctly
@@ -619,6 +633,7 @@ forge install foundry-rs/forge-std
 ### Trap Not Triggering
 
 **Checklist**:
+
 - [ ] Response contract address updated in trap contract?
 - [ ] Response contract address updated in drosera.toml?
 - [ ] Simulated count exceeds initial count by > 100?
@@ -628,12 +643,14 @@ forge install foundry-rs/forge-std
 ### Environment Variables Not Loading
 
 **Windows PowerShell**:
+
 ```powershell
 $env:PRIVATE_KEY="your_key"
 $env:RPC_URL="your_rpc"
 ```
 
 **Alternative**: Use .env file and load with:
+
 ```bash
 # If using direnv or similar
 source .env
@@ -668,37 +685,38 @@ source .env
 - [QuickNode RPC](https://www.quicknode.com/) - Alternative RPC provider
 - [Hoodi Testnet Faucet](https://hoodi-faucet.pk910.de/) - Get testnet ETH
 
-## 🎓 How This Fulfills the Requirements
+## ✅ Drosera Team Feedback - All Corrections Implemented
 
-This implementation satisfies all specified requirements:
+**Original Issues Identified:**
 
-✅ **Trap & Response Contracts**: Two separate smart contracts as specified
+1. ❌ Custom Trap abstract with mutable storage
+2. ❌ Owner-set state variables (not real on-chain data)
+3. ❌ Missing planner-safety checks
+4. ❌ Incorrect TOML config (function selector instead of signature)
+5. ❌ Unused response getters
 
-✅ **Factory Monitoring Simulation**: Uses `initialPairCount` and `simulatedPairCount` 
+**Corrections Applied:**
 
-✅ **Baseline Comparison**: Compares current count against initial baseline
+✅ **Official ITrap Interface**: No custom Trap abstract, implements Drosera's `ITrap` directly
 
-✅ **Safety Threshold**: Triggers when difference exceeds 100 new pairs
+✅ **Real Factory Data**: Reads `IUniV2Factory(FACTORY).allPairsLength()` every block - fully deterministic
 
-✅ **View-Only collect()**: Strictly reads internal state, no external calls
+✅ **Historical Comparison**: `shouldRespond()` compares `data[0]` (newest) vs `data[1]` (previous)
 
-✅ **Pure shouldRespond()**: Decodes data array and calculates difference
+✅ **Planner-Safety**: Validates `data.length >= 2`, `data[0].length > 0`, `data[1].length > 0`
 
-✅ **Response Contract Integration**: Calls `alertSpamDetection()` and emits events
+✅ **Correct TOML**: `response_function = "alertSpamDetection(uint256)"` (string signature, not selector), `block_sample_size = 2`
 
-✅ **Trap Base Contract**: Inherits from official Trap abstract contract
+✅ **Clean Implementation**: Removed all unused getters, owner functions, and custom event log storage
 
-✅ **Empty Constructor**: Passes dry-run simulations
+**Deployed & Tested:**
 
-✅ **Helper Function**: `updateSimulatedCount()` for testing
-
-✅ **Required Pure Functions**: Implements `getResponseContract`, `getResponseFunction`, `getResponseArguments`
-
-✅ **Deployment Script**: Foundry script deploys both contracts
-
-✅ **drosera.toml Configuration**: Maps state variables to inputs array
-
-✅ **Comprehensive Documentation**: This README with full details
+- **MockFactory**: `0xe4Ec2cdC6c312dA357abC40aBC47A5FE16aEa902` (150 pairs created for testing)
+- **Trap Contract**: `0x28c7F908Cc2b97601638f3D3b6e5a5C0aE494197`
+- **Trap Config**: `0x5994eFC05DA5cAFFF3f0DC6324C973c30F23A60d`
+- **Response**: `0x4582470e4071E61fe4FED4f49F5F47bEcbAD89e8`
+- **Network**: Hoodi Testnet
+- **Status**: Successfully deployed via `drosera apply` ✅
 
 ## 📄 License
 
@@ -709,4 +727,3 @@ MIT License - See contract headers for details
 **Built for Drosera Network Hoodi Testnet**
 
 For questions, issues, or contributions, please refer to the Drosera community resources above.
-

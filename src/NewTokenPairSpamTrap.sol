@@ -1,211 +1,96 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-struct EventLog {
-    // The topics of the log, including the signature, if any.
-    bytes32[] topics;
-    // The raw data of the log.
-    bytes data;
-    // The address of the log's emitter.
-    address emitter;
-}
-
-struct EventFilter {
-    // The address of the contract to filter logs from.
-    address contractAddress;
-    // The topics to filter logs by.
-    string signature;
-}
-
-abstract contract Trap {
-    EventLog[] private eventLogs;
-
-    function collect() external view virtual returns (bytes memory);
-
+/**
+ * @title ITrap
+ * @notice Official Drosera Trap interface
+ * @dev Minimal interface for Drosera v2.0 compatibility
+ */
+interface ITrap {
+    function collect() external view returns (bytes memory);
     function shouldRespond(
         bytes[] calldata data
-    ) external pure virtual returns (bool, bytes memory);
+    ) external pure returns (bool, bytes memory);
+}
 
-    function shouldAlert(
-        bytes[] calldata data
-    ) external pure virtual returns (bool, bytes memory);
-
-    function eventLogFilters() public view virtual returns (EventFilter[] memory) {
-        EventFilter[] memory filters = new EventFilter[](0);
-        return filters;
-    }
-
-    function version() public pure returns (string memory) {
-        return "2.0";
-    }
-
-    function setEventLogs(EventLog[] calldata logs) public {
-        EventLog[] storage storageArray = eventLogs;
-
-        // Set new logs
-        for (uint256 i = 0; i < logs.length; i++) {
-            storageArray.push(EventLog({
-                emitter: logs[i].emitter,
-                topics: logs[i].topics,
-                data: logs[i].data
-            }));
-        }
-    }
-
-    function getEventLogs() public view returns (EventLog[] memory) {
-        EventLog[] storage storageArray = eventLogs;
-        EventLog[] memory logs = new EventLog[](storageArray.length);
-
-        for (uint256 i = 0; i < storageArray.length; i++) {
-            logs[i] = EventLog({
-                emitter: storageArray[i].emitter,
-                topics: storageArray[i].topics,
-                data: storageArray[i].data
-            });
-        }
-        return logs;
-    }
+/**
+ * @title IUniV2Factory
+ * @notice UniswapV2-style factory interface
+ * @dev Used to read pair count from factory contracts
+ */
+interface IUniV2Factory {
+    function allPairsLength() external view returns (uint256);
 }
 
 /**
  * @title NewTokenPairSpamTrap
- * @notice A Drosera Network security trap that detects "New Token Pair Spam" attacks
- * @dev This trap monitors a simulated factory by tracking pair creation count
- *      and triggers when the number of new pairs exceeds a safety threshold
+ * @notice Drosera trap that detects rapid pair creation on DEX factories
+ * @dev Monitors factory pair count and triggers when growth exceeds threshold
+ *      Uses official ITrap interface and reads real on-chain factory data
  */
-contract NewTokenPairSpamTrap is Trap {
-    // State variables
-    uint256 public initialPairCount;      // Baseline pair count at initialization
-    uint256 public simulatedPairCount;    // Current simulated pair count
-    uint256 public constant SAFETY_THRESHOLD = 100; // Maximum allowed new pairs
-    address public owner;                 // Contract owner for updates
+contract NewTokenPairSpamTrap is ITrap {
+    // Factory to monitor (SimpleMockFactory deployed on Hoodi testnet)
+    address public constant FACTORY = 0xe4Ec2cdC6c312dA357abC40aBC47A5FE16aEa902; // UPDATE AFTER DEPLOYING SimpleMockFactory
 
-    // Hardcoded response contract address (will be updated after deployment)
-    address private constant RESPONSE_CONTRACT = address(0x4582470e4071E61fe4FED4f49F5F47bEcbAD89e8);
-    
-    // Events
-    event PairCountUpdated(uint256 newCount);
-    event TrapTriggered(uint256 initialCount, uint256 currentCount, uint256 difference);
+    // Maximum new pairs allowed within the monitoring window
+    uint256 public constant SAFETY_THRESHOLD = 100;
 
     /**
-     * @notice Constructor - empty to pass Drosera operator dry-run simulations
-     */
-    constructor() {
-        owner = msg.sender;
-        initialPairCount = 0;
-        simulatedPairCount = 0;
-    }
-
-    /**
-     * @notice Modifier to restrict access to owner only
-     */
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can call this function");
-        _;
-    }
-
-    /**
-     * @notice Updates the simulated pair count for testing purposes
-     * @param _newCount The new simulated pair count to set
-     */
-    function updateSimulatedCount(uint256 _newCount) external onlyOwner {
-        simulatedPairCount = _newCount;
-        emit PairCountUpdated(_newCount);
-    }
-
-    /**
-     * @notice Sets the initial baseline pair count
-     * @param _initialCount The baseline pair count to set
-     */
-    function setInitialPairCount(uint256 _initialCount) external onlyOwner {
-        initialPairCount = _initialCount;
-    }
-
-    /**
-     * @notice Collects current state data from the contract
-     * @dev This is a view function that reads internal state variables only
-     *      No external network calls are made to ensure Drosera operator compatibility
-     * @return Encoded data containing initialPairCount and simulatedPairCount
+     * @notice Collects current factory state
+     * @dev Reads pair count from factory and returns with block number
+     *      This is a view function with no external dependencies beyond the factory read
+     * @return Encoded data containing (pairCount, blockNumber)
      */
     function collect() external view override returns (bytes memory) {
-        // Return encoded state variables for analysis
-        return abi.encode(initialPairCount, simulatedPairCount);
+        uint256 count = 0;
+
+        // Read from factory with try-catch for safety
+        try IUniV2Factory(FACTORY).allPairsLength() returns (uint256 c) {
+            count = c;
+        } catch {
+            // If factory call fails, return 0 (trap won't trigger on error)
+        }
+        return abi.encode(count, block.number);
     }
 
     /**
-     * @notice Determines if the trap should trigger a response based on collected data
-     * @dev Pure function that decodes data and checks if new pair count exceeds threshold
-     * @param data Array of encoded data from previous collect() calls (newest first)
-     * @return shouldTrigger True if the trap should respond, false otherwise
-     * @return payload Encoded data to pass to the response contract
+     * @notice Determines if spam condition is met
+     * @dev Compares newest sample vs previous and triggers if delta > threshold
+     *      Pure function - no state reads, fully deterministic
+     * @param data Array of encoded samples from collect() - data[0] is newest, data[1] is previous
+     * @return shouldTrigger True if spam detected
+     * @return payload Encoded alert data (newest count, delta, blockNumber)
      */
     function shouldRespond(
         bytes[] calldata data
-    ) external pure override returns (bool shouldTrigger, bytes memory payload) {
-        // Decode the most recent data (first element in array)
-        if (data.length == 0) {
-            return (false, abi.encode(""));
+    )
+        external
+        pure
+        override
+        returns (bool shouldTrigger, bytes memory payload)
+    {
+        // Planner-safety: check we have at least 2 samples and they're not empty
+        if (data.length < 2 || data[0].length == 0 || data[1].length == 0) {
+            return (false, "");
         }
 
-        (uint256 initial, uint256 current) = abi.decode(data[0], (uint256, uint256));
-        
-        // Calculate the difference (number of new pairs)
-        uint256 newPairs = current > initial ? current - initial : 0;
+        // Decode newest and previous samples
+        (uint256 newestCount, uint256 newestBlock) = abi.decode(
+            data[0],
+            (uint256, uint256)
+        );
+        (uint256 previousCount, ) = abi.decode(data[1], (uint256, uint256));
 
-        // Check if difference exceeds the safety threshold
-        if (newPairs > SAFETY_THRESHOLD) {
-            // Trigger response and pass the current pair count
-            return (true, abi.encode(current));
+        // Calculate new pairs created between samples
+        uint256 delta = newestCount > previousCount
+            ? newestCount - previousCount
+            : 0;
+
+        // Trigger if delta exceeds threshold
+        if (delta > SAFETY_THRESHOLD) {
+            return (true, abi.encode(newestCount, delta, newestBlock));
         }
 
-        return (false, abi.encode(""));
-    }
-
-    /**
-     * @notice Alert function for notifications (optional implementation)
-     * @param data Array of encoded data from previous collect() calls
-     * @return shouldTrigger True if alert should be sent
-     * @return payload Encoded alert data
-     */
-    function shouldAlert(
-        bytes[] calldata data
-    ) external pure override returns (bool shouldTrigger, bytes memory payload) {
-        // Same logic as shouldRespond for alerts
-        if (data.length == 0) {
-            return (false, abi.encode(""));
-        }
-
-        (uint256 initial, uint256 current) = abi.decode(data[0], (uint256, uint256));
-        uint256 newPairs = current > initial ? current - initial : 0;
-
-        if (newPairs > SAFETY_THRESHOLD) {
-            return (true, abi.encode(current, newPairs));
-        }
-
-        return (false, abi.encode(""));
-    }
-
-    /**
-     * @notice Returns the response contract address
-     * @return The address of the response contract
-     */
-    function getResponseContract() external pure returns (address) {
-        return RESPONSE_CONTRACT;
-    }
-
-    /**
-     * @notice Returns the response function signature
-     * @return The function signature to call on the response contract
-     */
-    function getResponseFunction() external pure returns (string memory) {
-        return "alertSpamDetection(uint256)";
-    }
-
-    /**
-     * @notice Returns the response function arguments (placeholder)
-     * @return Empty bytes as arguments are passed via shouldRespond payload
-     */
-    function getResponseArguments() external pure returns (bytes memory) {
-        return abi.encode("");
+        return (false, "");
     }
 }

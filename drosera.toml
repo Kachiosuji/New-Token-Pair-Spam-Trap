@@ -1,18 +1,18 @@
 ethereum_rpc = "https://ethereum-hoodi-rpc.publicnode.com"
 drosera_rpc = "https://relay.hoodi.drosera.io"
 eth_chain_id = 560048
-# drosera_address = "0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D"
+drosera_address = "0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D"
 
 [traps]
 
-[traps.new_token_pair_spam_trap]
+[traps.new_token_pair_spam_trap_v2]
 path = "out/NewTokenPairSpamTrap.sol/NewTokenPairSpamTrap.json"
-response_contract = "0x4582470e4071E61fe4FED4f49F5F47bEcbAD89e8"
-# response_function = "0xe6bd2bbd"  # Function selector for alertSpamDetection(uint256)
+response_contract = "0x4582470e4071E61fe4FED4F49F5F47bEcbAD89e8"
+response_function = "alertSpamDetection(uint256)"
 cooldown_period_blocks = 33
 min_number_of_operators = 1
 max_number_of_operators = 2
-block_sample_size = 1
+block_sample_size = 2 
 private_trap = false
-whitelist = ["0x9aEbb91A6F788a41EeF5B28AC34e847aBefC1E75"]
-address = "0x2298838564f479B890B4D7A5C59aE0A340cD2f05"
+whitelist = []
+address = "0x5994eFC05DA5cAFFF3f0DC6324C973c30F23A60d"
