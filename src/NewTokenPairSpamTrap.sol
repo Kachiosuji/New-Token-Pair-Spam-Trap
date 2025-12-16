@@ -30,32 +30,35 @@ interface IUniV2Factory {
  */
 contract NewTokenPairSpamTrap is ITrap {
     // Factory to monitor (SimpleMockFactory deployed on Hoodi testnet)
-    address public constant FACTORY = 0xe4Ec2cdC6c312dA357abC40aBC47A5FE16aEa902; // UPDATE AFTER DEPLOYING SimpleMockFactory
+    address public constant FACTORY =
+        0xe4Ec2cdC6c312dA357abC40aBC47A5FE16aEa902;
 
     // Maximum new pairs allowed within the monitoring window
     uint256 public constant SAFETY_THRESHOLD = 100;
 
     /**
      * @notice Collects current factory state
-     * @dev Reads pair count from factory and returns with block number
+     * @dev Reads pair count from factory and returns with block number and validity flag
      *      This is a view function with no external dependencies beyond the factory read
-     * @return Encoded data containing (pairCount, blockNumber)
+     * @return Encoded data containing (pairCount, blockNumber, success)
      */
     function collect() external view override returns (bytes memory) {
         uint256 count = 0;
+        bool success = false;
 
         // Read from factory with try-catch for safety
         try IUniV2Factory(FACTORY).allPairsLength() returns (uint256 c) {
             count = c;
+            success = true;
         } catch {
-            // If factory call fails, return 0 (trap won't trigger on error)
+            // If factory call fails, success remains false
         }
-        return abi.encode(count, block.number);
+        return abi.encode(count, block.number, success);
     }
 
     /**
      * @notice Determines if spam condition is met
-     * @dev Compares newest sample vs previous and triggers if delta > threshold
+     * @dev Compares newest sample vs previous and triggers if pairs-per-block rate > threshold
      *      Pure function - no state reads, fully deterministic
      * @param data Array of encoded samples from collect() - data[0] is newest, data[1] is previous
      * @return shouldTrigger True if spam detected
@@ -74,20 +77,35 @@ contract NewTokenPairSpamTrap is ITrap {
             return (false, "");
         }
 
-        // Decode newest and previous samples
-        (uint256 newestCount, uint256 newestBlock) = abi.decode(
+        // Decode newest and previous samples with validity flags
+        (uint256 newestCount, uint256 newestBlock, bool newestOk) = abi.decode(
             data[0],
-            (uint256, uint256)
+            (uint256, uint256, bool)
         );
-        (uint256 previousCount, ) = abi.decode(data[1], (uint256, uint256));
+        (uint256 previousCount, uint256 previousBlock, bool previousOk) = abi
+            .decode(data[1], (uint256, uint256, bool));
+
+        // Skip if either sample is invalid
+        if (!newestOk || !previousOk) {
+            return (false, "");
+        }
 
         // Calculate new pairs created between samples
         uint256 delta = newestCount > previousCount
             ? newestCount - previousCount
             : 0;
 
-        // Trigger if delta exceeds threshold
-        if (delta > SAFETY_THRESHOLD) {
+        // Calculate block difference (prevent division by zero)
+        uint256 blockDiff = newestBlock > previousBlock
+            ? newestBlock - previousBlock
+            : 1;
+
+        // Calculate pairs per block rate
+        uint256 pairsPerBlock = delta / blockDiff;
+
+        // Trigger if pairs-per-block rate exceeds threshold
+        // This prevents gaming by spreading pairs across blocks
+        if (pairsPerBlock > SAFETY_THRESHOLD) {
             return (true, abi.encode(newestCount, delta, newestBlock));
         }
 

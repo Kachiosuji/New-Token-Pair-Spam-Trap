@@ -24,12 +24,16 @@ contract ResponseContract {
     uint256 public totalAlertsReceived;
     uint256 public lastAlertTimestamp;
     uint256 public lastAlertPairCount;
+    uint256 public lastAlertDelta;
+    uint256 public lastAlertBlock;
 
     // Mapping to track alert history
     mapping(uint256 => Alert) public alertHistory;
 
     struct Alert {
         uint256 pairCount;
+        uint256 delta;
+        uint256 sampleBlock;
         uint256 timestamp;
         address triggeredBy;
         bool processed;
@@ -54,16 +58,22 @@ contract ResponseContract {
     /**
      * @notice Main response function called by Drosera operators when trap triggers
      * @param _pairCount The current pair count that triggered the spam detection
+     * @param _delta The number of new pairs created since previous sample
+     * @param _sampleBlock The block number of the sample that triggered
      */
-    function alertSpamDetection(uint256 _pairCount) external {
+    function alertSpamDetection(uint256 _pairCount, uint256 _delta, uint256 _sampleBlock) external {
         // Record the alert
         totalAlertsReceived++;
         lastAlertTimestamp = block.timestamp;
         lastAlertPairCount = _pairCount;
+        lastAlertDelta = _delta;
+        lastAlertBlock = _sampleBlock;
 
         // Store alert in history
         alertHistory[totalAlertsReceived] = Alert({
             pairCount: _pairCount,
+            delta: _delta,
+            sampleBlock: _sampleBlock,
             timestamp: block.timestamp,
             triggeredBy: msg.sender,
             processed: false

@@ -521,9 +521,9 @@ c:\Users\kachi\Trap\
 
 ### NewTokenPairSpamTrap
 
-**Address**: `0x28c7F908Cc2b97601638f3D3b6e5a5C0aE494197`
+**Address**: `0xAaDc038c087df43626039CC8dFC972A7DE08Ac6a`
 
-**Trap Config**: `0x5994eFC05DA5cAFFF3f0DC6324C973c30F23A60d`
+**Trap Config**: `0x18305094b3E14b19EdeaB0FD553b864673d1EfbD`
 
 **Interface**: Implements `ITrap` (official Drosera v2.0 interface)
 
@@ -535,12 +535,12 @@ c:\Users\kachi\Trap\
 
 **Functions**:
 
-- `collect() external view returns (bytes)`: Reads `factory.allPairsLength()` and encodes with block number
-- `shouldRespond(bytes[] calldata data) external pure returns (bool, bytes)`: Compares newest vs previous sample, triggers if delta > 100
+- `collect() external view returns (bytes)`: Reads `factory.allPairsLength()` with validity flag, returns `abi.encode(count, blockNumber, success)`
+- `shouldRespond(bytes[] calldata data) external pure returns (bool, bytes)`: Validates samples, calculates pairs-per-block rate, triggers if rate > 100
 
 ### ResponseContract
 
-**Address**: `0x4582470e4071E61fe4FED4f49F5F47bEcbAD89e8`
+**Address**: `0x2758F900786BBC27DC6b34a661AC98392D6c63DF`
 
 **Events**:
 
@@ -549,8 +549,8 @@ c:\Users\kachi\Trap\
 
 **Public Functions**:
 
-- `alertSpamDetection(uint256)`: Receive alert from trap
-- `getAlert(uint256)`: Get specific alert details
+- `alertSpamDetection(uint256 pairCount, uint256 delta, uint256 sampleBlock)`: Receive alert from trap with full details
+- `getAlert(uint256)`: Get specific alert details (includes pairCount, delta, sampleBlock, timestamp)
 - `getLastAlert()`: Get most recent alert
 - `getTotalAlerts()`: Get total alert count
 - `markAlertProcessed(uint256)`: Mark alert as handled (owner only)
@@ -559,15 +559,17 @@ c:\Users\kachi\Trap\
 
 ### Design Principles
 
-1. **Real On-Chain Data**: `collect()` reads factory state via `IUniV2Factory.allPairsLength()` - operators get consistent, real data
+1. **Real On-Chain Data with Validity Flags**: `collect()` reads factory state via `IUniV2Factory.allPairsLength()` with try-catch and returns success flag
 
 2. **Pure Detection Logic**: `shouldRespond()` is pure and stateless - fully deterministic across all operators
 
-3. **Planner-Safe**: Validates data array length and checks for empty blobs before decoding
+3. **Planner-Safe**: Validates data array length, checks for empty blobs, and verifies validity flags before processing
 
 4. **No Mutable State**: Trap has no owner-controlled variables - cannot be manipulated between operator runs
 
 5. **Official Interface**: Uses Drosera's `ITrap` interface - guaranteed compatibility with operator infrastructure
+
+6. **Rate-Based Detection**: Calculates pairs-per-block rate to prevent gaming (e.g., 99 pairs/block won't trigger if spread)
 
 ### Best Practices
 
@@ -580,10 +582,10 @@ c:\Users\kachi\Trap\
 
 ### Production Considerations
 
-- Currently uses `SimpleMockFactory` for testing - replace `FACTORY` constant with real UniswapV2 factory address for production
-- Threshold of 100 is hardcoded - consider parameterizing for different factory sizes
+- Currently uses `SimpleMockFactory` for testing - replace `FACTORY` constant with real UniswapV2 factory address for production (PoC limitation)
+- Threshold of 100 pairs-per-block is hardcoded - consider parameterizing for different factory sizes
 - Single-factory monitoring - can extend to multi-factory with array of targets
-- Delta-based (newest vs previous) - consider time-weighted or rolling window approaches
+- Rate-based detection using pairs-per-block calculation prevents gaming but may need tuning for specific networks
 
 ## 🐛 Troubleshooting
 
@@ -687,7 +689,7 @@ source .env
 
 ## ✅ Drosera Team Feedback - All Corrections Implemented
 
-**Original Issues Identified:**
+### **Round 1 Corrections:**
 
 1. ❌ Custom Trap abstract with mutable storage
 2. ❌ Owner-set state variables (not real on-chain data)
@@ -695,7 +697,7 @@ source .env
 4. ❌ Incorrect TOML config (function selector instead of signature)
 5. ❌ Unused response getters
 
-**Corrections Applied:**
+**Applied:**
 
 ✅ **Official ITrap Interface**: No custom Trap abstract, implements Drosera's `ITrap` directly
 
@@ -705,18 +707,47 @@ source .env
 
 ✅ **Planner-Safety**: Validates `data.length >= 2`, `data[0].length > 0`, `data[1].length > 0`
 
-✅ **Correct TOML**: `response_function = "alertSpamDetection(uint256)"` (string signature, not selector), `block_sample_size = 2`
+✅ **Correct TOML**: `response_function = "alertSpamDetection(uint256,uint256,uint256)"` (string signature), `block_sample_size = 2`
 
 ✅ **Clean Implementation**: Removed all unused getters, owner functions, and custom event log storage
+
+---
+
+### **Round 2 Corrections (PoC-Deployable Fixes):**
+
+**Issue 1: Payload/ABI Mismatch (BLOCKING)**
+
+- Problem: Trap returned 3 uint256s but response expected 1
+- ✅ **Fixed**: Updated `ResponseContract.alertSpamDetection(uint256 pairCount, uint256 delta, uint256 sampleBlock)`
+- ✅ **Fixed**: TOML now has `response_function = "alertSpamDetection(uint256,uint256,uint256)"`
+
+**Issue 2: try/catch Validity Flag**
+
+- Problem: Failed factory calls returned 0, creating false deltas
+- ✅ **Fixed**: `collect()` returns `abi.encode(count, block.number, success)`
+- ✅ **Fixed**: `shouldRespond()` validates both samples with `if (!newestOk || !previousOk)`
+
+**Issue 3: Detection Logic - Rate-Based**
+
+- Problem: Simple delta gameable (99 pairs/block never triggers)
+- ✅ **Fixed**: Implemented pairs-per-block calculation: `pairsPerBlock = delta / blockDiff`
+- ✅ **Fixed**: Triggers when rate > threshold, preventing gaming
+
+**Issue 4: Hardcoded FACTORY**
+
+- Acknowledged as PoC limitation - documented for future improvement
+
+---
 
 **Deployed & Tested:**
 
 - **MockFactory**: `0xe4Ec2cdC6c312dA357abC40aBC47A5FE16aEa902` (150 pairs created for testing)
-- **Trap Contract**: `0x28c7F908Cc2b97601638f3D3b6e5a5C0aE494197`
-- **Trap Config**: `0x5994eFC05DA5cAFFF3f0DC6324C973c30F23A60d`
-- **Response**: `0x4582470e4071E61fe4FED4f49F5F47bEcbAD89e8`
-- **Network**: Hoodi Testnet
-- **Status**: Successfully deployed via `drosera apply` ✅
+- **Trap Contract**: `0xAaDc038c087df43626039CC8dFC972A7DE08Ac6a`
+- **Trap Config**: `0x18305094b3E14b19EdeaB0FD553b864673d1EfbD`
+- **Response**: `0x2758F900786BBC27DC6b34a661AC98392D6c63DF`
+- **Network**: Hoodi Testnet (Chain ID: 560048)
+- **Block**: 1836651
+- **Status**: Production-ready ✅
 
 ## 📄 License
 

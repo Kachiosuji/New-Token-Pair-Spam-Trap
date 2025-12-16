@@ -7,12 +7,12 @@ drosera_address = "0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D"
 
 [traps.new_token_pair_spam_trap_v2]
 path = "out/NewTokenPairSpamTrap.sol/NewTokenPairSpamTrap.json"
-response_contract = "0x4582470e4071E61fe4FED4F49F5F47bEcbAD89e8"
-response_function = "alertSpamDetection(uint256)"
+response_contract = "0x2758F900786BBC27DC6b34a661AC98392D6c63DF"
+response_function = "alertSpamDetection(uint256,uint256,uint256)"
 cooldown_period_blocks = 33
 min_number_of_operators = 1
 max_number_of_operators = 2
 block_sample_size = 2 
 private_trap = false
 whitelist = []
-address = "0x5994eFC05DA5cAFFF3f0DC6324C973c30F23A60d"
+address = "0x18305094b3E14b19EdeaB0FD553b864673d1EfbD"
