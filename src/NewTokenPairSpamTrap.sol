@@ -33,8 +33,8 @@ contract NewTokenPairSpamTrap is ITrap {
     address public constant FACTORY =
         0xe4Ec2cdC6c312dA357abC40aBC47A5FE16aEa902;
 
-    // Maximum new pairs allowed within the monitoring window
-    uint256 public constant SAFETY_THRESHOLD = 100;
+    // Maximum pairs per block rate allowed (rate-based threshold)
+    uint256 public constant RATE_THRESHOLD = 10;
 
     /**
      * @notice Collects current factory state
@@ -95,17 +95,18 @@ contract NewTokenPairSpamTrap is ITrap {
             ? newestCount - previousCount
             : 0;
 
-        // Calculate block difference (prevent division by zero)
-        uint256 blockDiff = newestBlock > previousBlock
-            ? newestBlock - previousBlock
-            : 1;
+        // Early return for invalid block ordering (prevents division by zero and false positives)
+        if (newestBlock <= previousBlock) {
+            return (false, "");
+        }
+        uint256 blockDiff = newestBlock - previousBlock;
 
         // Calculate pairs per block rate
         uint256 pairsPerBlock = delta / blockDiff;
 
         // Trigger if pairs-per-block rate exceeds threshold
         // This prevents gaming by spreading pairs across blocks
-        if (pairsPerBlock > SAFETY_THRESHOLD) {
+        if (pairsPerBlock > RATE_THRESHOLD) {
             return (true, abi.encode(newestCount, delta, newestBlock));
         }
 

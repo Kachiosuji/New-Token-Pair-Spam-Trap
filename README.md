@@ -521,7 +521,7 @@ c:\Users\kachi\Trap\
 
 ### NewTokenPairSpamTrap
 
-**Address**: `0xAaDc038c087df43626039CC8dFC972A7DE08Ac6a`
+**Address**: `0x4ccc9C28d869FAA8A99e63B98CD129627cD96ea1`
 
 **Trap Config**: `0x18305094b3E14b19EdeaB0FD553b864673d1EfbD`
 
@@ -531,12 +531,12 @@ c:\Users\kachi\Trap\
 | Constant | Type | Value | Purpose |
 |----------|------|-------|------|
 | FACTORY | address | `0xe4Ec2cdC6c312dA357abC40aBC47A5FE16aEa902` | Factory to monitor |
-| SAFETY_THRESHOLD | uint256 | 100 | Trigger threshold |
+| RATE_THRESHOLD | uint256 | 10 | Pairs-per-block trigger threshold |
 
 **Functions**:
 
 - `collect() external view returns (bytes)`: Reads `factory.allPairsLength()` with validity flag, returns `abi.encode(count, blockNumber, success)`
-- `shouldRespond(bytes[] calldata data) external pure returns (bool, bytes)`: Validates samples, calculates pairs-per-block rate, triggers if rate > 100
+- `shouldRespond(bytes[] calldata data) external pure returns (bool, bytes)`: Validates samples and block ordering, calculates pairs-per-block rate, triggers if rate > 10
 
 ### ResponseContract
 
@@ -563,7 +563,7 @@ c:\Users\kachi\Trap\
 
 2. **Pure Detection Logic**: `shouldRespond()` is pure and stateless - fully deterministic across all operators
 
-3. **Planner-Safe**: Validates data array length, checks for empty blobs, and verifies validity flags before processing
+3. **Planner-Safe**: Validates data array length, checks for empty blobs, verifies validity flags, and ensures correct block ordering before processing
 
 4. **No Mutable State**: Trap has no owner-controlled variables - cannot be manipulated between operator runs
 
@@ -583,9 +583,10 @@ c:\Users\kachi\Trap\
 ### Production Considerations
 
 - Currently uses `SimpleMockFactory` for testing - replace `FACTORY` constant with real UniswapV2 factory address for production (PoC limitation)
-- Threshold of 100 pairs-per-block is hardcoded - consider parameterizing for different factory sizes
+- Threshold of 10 pairs-per-block is hardcoded - consider parameterizing for different factory sizes
 - Single-factory monitoring - can extend to multi-factory with array of targets
 - Rate-based detection using pairs-per-block calculation prevents gaming but may need tuning for specific networks
+- Division-by-zero protection via early return for invalid block ordering
 
 ## 🐛 Troubleshooting
 
@@ -638,7 +639,7 @@ forge install foundry-rs/forge-std
 
 - [ ] Response contract address updated in trap contract?
 - [ ] Response contract address updated in drosera.toml?
-- [ ] Simulated count exceeds initial count by > 100?
+- [ ] Simulated count exceeds threshold (>10 pairs per block)?
 - [ ] Trap deployed successfully with Drosera?
 - [ ] Operator is monitoring the trap?
 
@@ -739,14 +740,30 @@ source .env
 
 ---
 
+### **Round 3 Corrections (Edge Cases & Threshold Tuning):**
+
+**Issue A: Division-by-zero / Correctness Edge Case**
+
+- Problem: Using `blockDiff = 1` fallback when blocks equal/reversed inflates `pairsPerBlock` causing false positives
+- ✅ **Fixed**: Added early return `if (newestBlock <= previousBlock) return (false, "");`
+- ✅ **Fixed**: Clean calculation `uint256 blockDiff = newestBlock - previousBlock;`
+
+**Issue B: Rate Threshold Too High**
+
+- Problem: `SAFETY_THRESHOLD = 100` means >100 pairs/block to trigger (extremely high, unlikely to ever fire)
+- ✅ **Fixed**: Renamed to `RATE_THRESHOLD = 10` for realistic spam detection
+- ✅ **Fixed**: Now triggers at >10 pairs per block
+
+---
+
 **Deployed & Tested:**
 
-- **MockFactory**: `0xe4Ec2cdC6c312dA357abC40aBC47A5FE16aEa902` (150 pairs created for testing)
-- **Trap Contract**: `0xAaDc038c087df43626039CC8dFC972A7DE08Ac6a`
+- **MockFactory**: `0xe4Ec2cdC6c312dA357abC40aBC47A5FE16aEa902`
+- **Trap Contract**: `0x4ccc9C28d869FAA8A99e63B98CD129627cD96ea1`
 - **Trap Config**: `0x18305094b3E14b19EdeaB0FD553b864673d1EfbD`
 - **Response**: `0x2758F900786BBC27DC6b34a661AC98392D6c63DF`
 - **Network**: Hoodi Testnet (Chain ID: 560048)
-- **Block**: 1836651
+- **Block**: 1942350
 - **Status**: Production-ready ✅
 
 ## 📄 License
